@@ -1,0 +1,28 @@
+# Source files
+src/
+
+# Config files
+tsconfig.json
+build.js
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Testing
+coverage/
+*.test.ts
+*.test.js
+
+# Docs (README is included via "files" in package.json)
+docs/
+
+# Examples
+examples/
+
+# Claude configuration
+CLAUDE.md

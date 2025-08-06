@@ -1,0 +1,52 @@
+{
+  "name": "bullhorn-bridge",
+  "version": "1.0.0",
+  "description": "Universal JavaScript client for Bullhorn ATS iframe integrations using post-robot",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run build:cjs && npm run build:esm && npm run build:types",
+    "build:cjs": "tsc --module commonjs --outDir dist --declaration false",
+    "build:esm": "tsc --module esnext --outDir dist --declaration false && mv dist/index.js dist/index.mjs",
+    "build:types": "tsc --declaration --emitDeclarationOnly --outDir dist",
+    "build:simple": "node build.js",
+    "prepublishOnly": "npm run build:simple",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "bullhorn",
+    "ats",
+    "iframe",
+    "integration",
+    "post-robot",
+    "api",
+    "bridge",
+    "staffing",
+    "recruiting"
+  ],
+  "author": "Dan Donathan",
+  "license": "MIT",
+  "dependencies": {
+    "post-robot": "^10.0.46"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ddonathan/bullhorn-bridge"
+  },
+  "bugs": {
+    "url": "https://github.com/ddonathan/bullhorn-bridge/issues"
+  },
+  "homepage": "https://github.com/ddonathan/bullhorn-bridge#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}
