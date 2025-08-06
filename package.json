@@ -1,6 +1,6 @@
 {
   "name": "bullhorn-bridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Universal JavaScript client for Bullhorn ATS iframe integrations using post-robot",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
