@@ -1,6 +1,6 @@
 {
   "name": "bullhorn-bridge",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Framework-agnostic TypeScript client for Bullhorn ATS iframe integrations: secure post-robot messaging, automatic registration, events, and HTTP/UI helpers.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
