@@ -1,8 +1,22 @@
-name: Publish to npm on Release
+name: Publish to npm on Release/Tag
 
 on:
   release:
     types: [published]
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (vX.Y.Z or X.Y.Z)'
+        required: false
+        default: ''
+
+concurrency:
+  group: publish-${{ github.event_name }}-${{ github.ref || github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -26,13 +40,33 @@ jobs:
       - name: Install dependencies (clean)
         run: npm ci
 
-      - name: Verify release tag matches package version
+      - name: Determine tag and package version
+        id: vars
+        shell: bash
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          echo "Tag: ${TAG_VERSION} | package.json: ${PKG_VERSION}"
-          if [ "${TAG_VERSION}" != "v${PKG_VERSION}" ] && [ "${TAG_VERSION}" != "${PKG_VERSION}" ]; then
-            echo "Release tag must match package.json version (v${PKG_VERSION} or ${PKG_VERSION})." >&2
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          PKG=$(node -p "require('./package.json').version")
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "pkg=$PKG" >> $GITHUB_OUTPUT
+          echo "Detected tag: $TAG | package.json: $PKG"
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          TAG='${{ steps.vars.outputs.tag }}'
+          PKG='${{ steps.vars.outputs.pkg }}'
+          if [ -z "$TAG" ]; then
+            echo "No tag provided or detected. Provide input 'tag' when running manually." >&2
+            exit 1
+          fi
+          if [ "$TAG" != "v$PKG" ] && [ "$TAG" != "$PKG" ]; then
+            echo "Release tag must match package.json version (v$PKG or $PKG)." >&2
             exit 1
           fi
 
@@ -46,5 +80,4 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Enable provenance for npm publish (requires id-token permission)
           npm publish --provenance --access public
