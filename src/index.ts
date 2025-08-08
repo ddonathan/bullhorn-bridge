@@ -121,6 +121,24 @@ export class BullhornBridge {
   }
 
   /**
+   * HTML entity encode for XSS prevention
+   */
+  private htmlEncode(str: string): string {
+    const entityMap: { [key: string]: string } = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+      '/': '&#x2F;',
+      '`': '&#x60;',
+      '=': '&#x3D;'
+    };
+    
+    return String(str).replace(/[&<>"'`=\/]/g, (s) => entityMap[s]);
+  }
+
+  /**
    * Validate and sanitize a parameter value
    */
   private validateParam(value: string | null, maxLength: number = this.MAX_PARAM_LENGTH): string | undefined {
@@ -132,8 +150,8 @@ export class BullhornBridge {
       return undefined;
     }
     
-    // Basic XSS prevention - remove dangerous characters
-    return value.replace(/[<>"'&]/g, '');
+    // Comprehensive XSS prevention using HTML entity encoding
+    return this.htmlEncode(value);
   }
 
   /**
@@ -308,14 +326,21 @@ export class BullhornBridge {
    */
   private sanitizeEventData(data: any): any {
     if (typeof data === 'string') {
-      // Remove potential XSS vectors
-      return data.replace(/[<>"']/g, '');
+      // Use consistent HTML entity encoding for XSS prevention
+      return this.htmlEncode(data);
     }
     if (typeof data === 'object' && data !== null) {
+      // Handle arrays
+      if (Array.isArray(data)) {
+        return data.map(item => this.sanitizeEventData(item));
+      }
+      // Handle objects
       const sanitized: any = {};
       for (const key in data) {
         if (data.hasOwnProperty(key)) {
-          sanitized[key] = this.sanitizeEventData(data[key]);
+          // Sanitize both keys and values
+          const sanitizedKey = this.htmlEncode(String(key));
+          sanitized[sanitizedKey] = this.sanitizeEventData(data[key]);
         }
       }
       return sanitized;

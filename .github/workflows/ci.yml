@@ -1,0 +1,210 @@
+name: CI - Test and Validate
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  test:
+    name: Test Node.js ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['18', '20', '22']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter (if exists)
+        run: npm run lint --if-present
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build package
+        run: npm run build:simple
+
+      - name: Validate build output
+        shell: bash
+        run: |
+          # Verify all expected files exist
+          for file in dist/index.js dist/index.mjs dist/index.d.ts; do
+            if [ ! -f "$file" ]; then
+              echo "Error: $file not found"
+              exit 1
+            fi
+          done
+          echo "✅ Build validation successful"
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
+
+      - name: Check for known vulnerabilities
+        run: npx audit-ci --moderate || true
+
+  bundle-analysis:
+    name: Bundle Size Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build:simple
+
+      - name: Analyze bundle size
+        shell: bash
+        run: |
+          echo "📦 Bundle Size Report"
+          echo "===================="
+          
+          # Get file sizes
+          CJS_SIZE=$(stat -c%s dist/index.js 2>/dev/null || stat -f%z dist/index.js)
+          ESM_SIZE=$(stat -c%s dist/index.mjs 2>/dev/null || stat -f%z dist/index.mjs)
+          TYPES_SIZE=$(stat -c%s dist/index.d.ts 2>/dev/null || stat -f%z dist/index.d.ts)
+          
+          # Convert to human-readable
+          echo "CommonJS: $(numfmt --to=iec-i --suffix=B $CJS_SIZE 2>/dev/null || echo "${CJS_SIZE} bytes")"
+          echo "ESM: $(numfmt --to=iec-i --suffix=B $ESM_SIZE 2>/dev/null || echo "${ESM_SIZE} bytes")"
+          echo "Types: $(numfmt --to=iec-i --suffix=B $TYPES_SIZE 2>/dev/null || echo "${TYPES_SIZE} bytes")"
+          
+          # Total size
+          TOTAL=$((CJS_SIZE + ESM_SIZE + TYPES_SIZE))
+          echo "Total: $(numfmt --to=iec-i --suffix=B $TOTAL 2>/dev/null || echo "${TOTAL} bytes")"
+          
+          # Warn if bundle is too large (>100KB for main bundle)
+          if [ $CJS_SIZE -gt 102400 ]; then
+            echo "⚠️ Warning: CommonJS bundle exceeds 100KB"
+          fi
+          if [ $ESM_SIZE -gt 102400 ]; then
+            echo "⚠️ Warning: ESM bundle exceeds 100KB"
+          fi
+
+      - name: Check package size
+        run: npx package-size ./dist --limit 150KB || true
+
+  code-quality:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for TypeScript strict mode
+        shell: bash
+        run: |
+          if grep -q '"strict": true' tsconfig.json; then
+            echo "✅ TypeScript strict mode enabled"
+          else
+            echo "⚠️ Warning: TypeScript strict mode not enabled"
+          fi
+
+      - name: Check for unused dependencies
+        run: npx depcheck --ignores="@types/*" || true
+
+      - name: Check for circular dependencies
+        run: npx madge --circular src/index.ts || true
+
+  compatibility-check:
+    name: Browser Compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build:simple
+
+      - name: Check browser compatibility
+        shell: bash
+        run: |
+          echo "🌐 Browser Compatibility Check"
+          echo "=============================="
+          
+          # Check for modern JavaScript features that might not be transpiled
+          echo "Checking for ES2020+ features..."
+          
+          # Check for optional chaining
+          if grep -q '\?\.' dist/index.js; then
+            echo "ℹ️ Optional chaining detected - requires Chrome 80+"
+          fi
+          
+          # Check for nullish coalescing
+          if grep -q '\?\?' dist/index.js; then
+            echo "ℹ️ Nullish coalescing detected - requires Chrome 80+"
+          fi
+          
+          # Check for dynamic imports (already documented as required)
+          if grep -q 'import(' dist/index.js; then
+            echo "✅ Dynamic imports used (documented requirement)"
+          fi
+          
+          echo "Minimum browser versions documented: Chrome/Edge 90+, Firefox 88+, Safari 14+"

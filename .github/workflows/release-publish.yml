@@ -1,18 +1,19 @@
-name: Publish to npm on Release/Tag
+name: Manual Publish to npm
 
 on:
   release:
     types: [published]
-  push:
-    tags:
-      - 'v*'
-      - '[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to publish (vX.Y.Z or X.Y.Z)'
+      version:
+        description: 'Version to publish (X.Y.Z format)'
+        required: true
+        type: string
+      dry-run:
+        description: 'Perform a dry run without publishing'
         required: false
-        default: ''
+        type: boolean
+        default: false
 
 concurrency:
   group: publish-${{ github.event_name }}-${{ github.ref || github.event.release.tag_name || inputs.tag }}
@@ -26,8 +27,9 @@ permissions:
 jobs:
   publish:
     name: Test, Build, and Publish
-    if: ${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    environment: npm-publishing
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,37 +43,46 @@ jobs:
       - name: Install dependencies (clean)
         run: npm ci
 
-      - name: Determine tag and package version
+      - name: Determine package version
         id: vars
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            TAG="$GITHUB_REF_NAME"
-          else
-            TAG="${{ inputs.tag }}"
+            VERSION="${{ github.event.release.tag_name }}"
+            # Remove 'v' prefix if present
+            VERSION="${VERSION#v}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
           fi
+          
           NAME=$(node -p "require('./package.json').name")
           PKG=$(node -p "require('./package.json').version")
+          
           echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "pkg=$PKG" >> $GITHUB_OUTPUT
-          echo "Detected name: $NAME | tag: $TAG | package.json: $PKG"
+          echo "dry_run=${{ inputs.dry-run }}" >> $GITHUB_OUTPUT
+          echo "Detected name: $NAME | version: $VERSION | package.json: $PKG"
 
-      - name: Verify tag matches package.json version
+      - name: Verify version matches package.json
+        if: steps.vars.outputs.dry_run != 'true'
         shell: bash
         run: |
-          TAG='${{ steps.vars.outputs.tag }}'
+          VERSION='${{ steps.vars.outputs.version }}'
           PKG='${{ steps.vars.outputs.pkg }}'
-          if [ -z "$TAG" ]; then
-            echo "No tag provided or detected. Provide input 'tag' when running manually." >&2
+          
+          if [ -z "$VERSION" ]; then
+            echo "No version provided or detected." >&2
             exit 1
           fi
-          if [ "$TAG" != "v$PKG" ] && [ "$TAG" != "$PKG" ]; then
-            echo "Release tag must match package.json version (v$PKG or $PKG)." >&2
+          
+          if [ "$VERSION" != "$PKG" ]; then
+            echo "Error: Provided version ($VERSION) must match package.json version ($PKG)." >&2
+            echo "Please update package.json first or provide the correct version." >&2
             exit 1
           fi
+          
+          echo "✅ Version validation passed: $VERSION"
 
       - name: Run tests
         run: npm test --silent
@@ -93,8 +104,14 @@ jobs:
             echo "$NAME@$PKG not found on npm. Will publish."
           fi
 
+      - name: Publish to npm (Dry Run)
+        if: steps.vars.outputs.dry_run == 'true'
+        run: |
+          echo "🔍 DRY RUN MODE - Not actually publishing"
+          npm publish --dry-run
+
       - name: Publish to npm
-        if: steps.published.outputs.already != 'true'
+        if: steps.published.outputs.already != 'true' && steps.vars.outputs.dry_run != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |

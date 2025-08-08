@@ -1,0 +1,209 @@
+name: Auto-Publish to npm on Version Change
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  check-version:
+    name: Check for Version Change
+    runs-on: ubuntu-latest
+    outputs:
+      should-publish: ${{ steps.version-check.outputs.changed }}
+      version: ${{ steps.version-check.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit for comparison
+
+      - name: Check version change
+        id: version-check
+        shell: bash
+        run: |
+          # Get current version
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+          
+          # Get previous version (if exists)
+          git show HEAD~1:package.json > /tmp/prev-package.json 2>/dev/null || echo "{}" > /tmp/prev-package.json
+          PREV_VERSION=$(node -p "try { require('/tmp/prev-package.json').version } catch { 'none' }")
+          echo "Previous version: $PREV_VERSION"
+          
+          # Check if version changed
+          if [ "$CURRENT_VERSION" != "$PREV_VERSION" ] && [ "$PREV_VERSION" != "none" ]; then
+            echo "Version changed from $PREV_VERSION to $CURRENT_VERSION"
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "Version unchanged or initial commit"
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+  test-and-build:
+    name: Test and Build
+    needs: check-version
+    if: needs.check-version.outputs.should-publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter (if exists)
+        run: npm run lint --if-present
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build package
+        run: npm run build:simple
+
+      - name: Validate build output
+        shell: bash
+        run: |
+          # Check that build files exist
+          if [ ! -f dist/index.js ]; then
+            echo "Error: dist/index.js not found"
+            exit 1
+          fi
+          if [ ! -f dist/index.mjs ]; then
+            echo "Error: dist/index.mjs not found"
+            exit 1
+          fi
+          if [ ! -f dist/index.d.ts ]; then
+            echo "Error: dist/index.d.ts not found"
+            exit 1
+          fi
+          echo "Build validation successful"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+          retention-days: 1
+
+  publish:
+    name: Publish to npm
+    needs: [check-version, test-and-build]
+    if: needs.check-version.outputs.should-publish == 'true'
+    runs-on: ubuntu-latest
+    environment: npm-publishing
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+
+      - name: Check if version already published
+        id: check-npm
+        shell: bash
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          
+          if npm view "$PACKAGE_NAME@$VERSION" version > /dev/null 2>&1; then
+            echo "Version $VERSION already published to npm"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version $VERSION not found on npm, will publish"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to npm
+        if: steps.check-npm.outputs.exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --provenance --access public
+
+      - name: Create Git tag
+        if: steps.check-npm.outputs.exists != 'true'
+        shell: bash
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if tag already exists
+          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION"; then
+            echo "Tag v$VERSION already exists"
+          else
+            git tag -a "v$VERSION" -m "Release v$VERSION (auto-published)"
+            git push origin "v$VERSION"
+            echo "Created and pushed tag v$VERSION"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.check-npm.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          
+          # Check if release already exists
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "Release v$VERSION already exists"
+          else
+            # Extract changelog for this version if CHANGELOG.md exists
+            RELEASE_NOTES="Automated release for version $VERSION"
+            if [ -f CHANGELOG.md ]; then
+              # Try to extract notes for this version
+              EXTRACTED_NOTES=$(awk "/^##? .*$VERSION/,/^##? .*[0-9]+\.[0-9]+\.[0-9]+/" CHANGELOG.md | head -n -1 || true)
+              if [ -n "$EXTRACTED_NOTES" ]; then
+                RELEASE_NOTES="$EXTRACTED_NOTES"
+              fi
+            fi
+            
+            gh release create "v$VERSION" \
+              --title "v$VERSION" \
+              --notes "$RELEASE_NOTES" \
+              --generate-notes
+            
+            echo "Created GitHub release v$VERSION"
+          fi
+
+  notify-success:
+    name: Notify Success
+    needs: [check-version, publish]
+    if: always() && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Success notification
+        run: |
+          echo "✅ Successfully published version ${{ needs.check-version.outputs.version }} to npm"
+          echo "Package URL: https://www.npmjs.com/package/bullhorn-bridge/v/${{ needs.check-version.outputs.version }}"
