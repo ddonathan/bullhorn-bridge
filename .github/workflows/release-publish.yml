@@ -102,4 +102,4 @@ jobs:
 
       - name: Done (no publish needed)
         if: steps.published.outputs.already == 'true'
-        run: echo "Nothing to do: version already on npm"
+        run: echo 'Nothing to do: version already on npm'
