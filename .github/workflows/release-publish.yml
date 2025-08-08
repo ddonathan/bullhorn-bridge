@@ -51,10 +51,12 @@ jobs:
           else
             TAG="${{ inputs.tag }}"
           fi
+          NAME=$(node -p "require('./package.json').name")
           PKG=$(node -p "require('./package.json').version")
+          echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "pkg=$PKG" >> $GITHUB_OUTPUT
-          echo "Detected tag: $TAG | package.json: $PKG"
+          echo "Detected name: $NAME | tag: $TAG | package.json: $PKG"
 
       - name: Verify tag matches package.json version
         shell: bash
@@ -76,8 +78,27 @@ jobs:
       - name: Build
         run: npm run build:simple --silent
 
+      - name: Check if version already published
+        id: published
+        shell: bash
+        run: |
+          NAME='${{ steps.vars.outputs.name }}'
+          PKG='${{ steps.vars.outputs.pkg }}'
+          if npm view "$NAME@$PKG" version > /dev/null 2>&1; then
+            echo "already=true" >> $GITHUB_OUTPUT
+            echo "$NAME@$PKG already exists on npm. Skipping publish."
+          else
+            echo "already=false" >> $GITHUB_OUTPUT
+            echo "$NAME@$PKG not found on npm. Will publish."
+          fi
+
       - name: Publish to npm
+        if: steps.published.outputs.already != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish --provenance --access public
+
+      - name: Done (no publish needed)
+        if: steps.published.outputs.already == 'true'
+        run: echo "Nothing to do: version already on npm"
