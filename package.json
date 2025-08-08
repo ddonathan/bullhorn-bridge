@@ -1,6 +1,6 @@
 {
   "name": "bullhorn-bridge",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Universal JavaScript client for Bullhorn ATS iframe integrations using post-robot",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -16,7 +16,7 @@
     "build:types": "tsc --declaration --emitDeclarationOnly --outDir dist",
     "build:simple": "node build.js",
     "prepublishOnly": "npm run build:simple",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsc -p tsconfig.json --noEmit && node -e \"console.log('ok')\""
   },
   "keywords": [
     "bullhorn",
